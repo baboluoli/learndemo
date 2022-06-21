@@ -1,79 +1,86 @@
 import streamlit as st
 import faiss
-import requests
 import pandas as pd
 import gdown
 from sentence_transformers import SentenceTransformer
 from os.path import exists
 import zipfile
 import numpy as np
+from haystack.document_stores import FAISSDocumentStore
+from haystack.retriever.dense import EmbeddingRetriever
+from haystack.generator.transformers import Seq2SeqGenerator
+from haystack.pipelines import GenerativeQAPipeline
+
 
 @st.experimental_singleton
 def init_faiss():
-    url = 'https://drive.google.com/file/d/1--rpyd_vkPQKbSv0KbXcJGHKHoTDj5iC/view?usp=sharing'
+    url1 = 'https://drive.google.com/file/d/1nGBi0rsPVUf-TJfe89h15ZXUeXwXfEUE/view?usp=sharing'
+    url2 = 'https://drive.google.com/file/d/1VilhsB1qIHrenVnjRmXJREBtPWLkfYqA/view?usp=sharing'
+    url3 = 'https://drive.google.com/file/d/1HX2Ikq_t6UX7TTjyArW9PLFdJ6U6WK7A/view?usp=sharing'
 
-    if not exists("investo.index"):
-        gdown.download(url, "investo.index", quiet=False, fuzzy=True)
+    if not exists("investoqa.index"):
+        gdown.download(url1, "investoqa.index", quiet=False, fuzzy=True)
+    if not exists("investoqa.json"):
+        gdown.download(url2, "investoqa.json", quiet=False, fuzzy=True)
+    if not exists("faiss_document_store.db"):
+        gdown.download(url3, "faiss_document_store.db", quiet=False, fuzzy=True)
 
-    return faiss.read_index("investo.index")
-    
+    return FAISSDocumentStore.load("investoqa.index")
+
+
 @st.experimental_singleton
 def init_retriever():
-    url = 'https://drive.google.com/file/d/1-12-MNuSUGMNAulFFoWANI4wvgta1zdH/view?usp=sharing'
+    return EmbeddingRetriever(
+        document_store=index,
+        embedding_model="flax-sentence-embeddings/all_datasets_v3_mpnet-base",
+        model_format="sentence_transformers"
+    )
 
-    if not exists("model.zip"):
-        gdown.download(url, "model.zip", quiet=False, fuzzy=True)
-
-    with zipfile.ZipFile("model.zip","r") as zip_ref:
-        zip_ref.extractall("model")
-
-    return SentenceTransformer("./model")
 
 @st.experimental_singleton
-def init_passages():
-    url = "https://drive.google.com/file/d/1XU35ze1d-DrzFPcb4y0VHLUHdwAcWFDA/view?usp=sharing"
+def init_generator():
+    return Seq2SeqGenerator(model_name_or_path="vblagoje/bart_lfqa")
 
-    if not exists("data.csv"):
-        gdown.download(url, "data.csv", quiet=False, fuzzy=True)
 
-    df = pd.read_csv("data.csv")
+@st.experimental_singleton
+def init_pipe():
+    return GenerativeQAPipeline(generator, retriever)
 
-    return df
+
 
 index = init_faiss()
 retriever = init_retriever()
-passages_df = init_passages()
+generator = init_generator()
+pipe = init_pipe()
 
 
-def card(passage_tuples):
+def card(answers):
     items = [f"""
-        <p>{passage[0]}: {passage[1]}</p>
-    """ for passage in passage_tuples]
+        <p>{answer_container.answer}</p>
+    """ for answer_container in answers]
     return st.markdown(f"""
         <div style="display: flex; flex-flow: row wrap; text-align: center; justify-content: center;">
         {''.join(items)}
         </div>
     """, unsafe_allow_html=True)
 
- 
+
 st.write("""
-## ⚡️ Semantic Search Demo ⚡️
+## ⚡️ LongformQA Demo ⚡️
 """)
 
 query = st.text_input("What are you looking for?", "")
 
 if query != "":
-    with st.spinner(text="Similarity Searching..."):
-        xq = retriever.encode([query], convert_to_tensor=False)
-        D, I = index.search(np.array(xq), k=5)
-        print(I)
-        
-        found_passages = []
-        for score, id in zip(D[0], I[0]):
-            passage_row = passages_df[passages_df["id"] == id]
-            id = passage_row["id"].item()
-            passage = passage_row["passages"].item()
-            found_passages.append((id, passage))
+    with st.spinner(text="Fetching answers..."):
+        result = pipe.run(
+            query=query,
+            params={
+                "Retriever": {"top_k": 5},
+                "Generator": {"top_k": 1}
+            })
 
-    with st.spinner(text="Fetching passages 🚀🚀🚀"):
-        card(found_passages)
+        answers = result["answers"]
+
+    with st.spinner(text="Here is your answer 💦💦💦 🚀🚀🚀"):
+        card(answers)

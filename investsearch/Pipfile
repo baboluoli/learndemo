@@ -8,7 +8,6 @@ streamlit = "*"
 sentence-transformers = "*"
 gdown = "*"
 faiss-cpu = "*"
-farm-haystack = {extras = ["faiss"], version = "*"}
 
 [dev-packages]
 
